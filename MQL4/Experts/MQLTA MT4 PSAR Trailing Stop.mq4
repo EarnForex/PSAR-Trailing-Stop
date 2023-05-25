@@ -1,5 +1,5 @@
 #property link          "https://www.earnforex.com/metatrader-expert-advisors/psar-trailing-stop/"
-#property version       "1.04"
+#property version       "1.05"
 #property strict
 #property copyright     "EarnForex.com - 2019-2023"
 #property description   "This expert advisor will trail the stop-loss following the Parabolic SAR."
@@ -58,13 +58,7 @@ input int Xoff = 20;                              // Horizontal spacing for the 
 input int Yoff = 20;                              // Vertical spacing for the control panel
 
 int OrderOpRetry = 5;
-int SuperTrendShift = 0;
-
-double TrendUpTmp[], TrendDownTmp[];
-int changeOfTrend;
-int MaxBars = Shift + 1;
 bool EnableTrailing = EnableTrailingParam;
-
 double DPIScale; // Scaling parameter for the panel based on the screen DPI.
 int PanelMovX, PanelMovY, PanelLabX, PanelLabY, PanelRecX;
 
@@ -171,8 +165,8 @@ void TrailingStop()
         double TickSize = SymbolInfoDouble(Instrument, SYMBOL_TRADE_TICK_SIZE);
         if (TickSize > 0)
         {
-            SLBuy = NormalizeDouble(MathRound(SLBuy / TickSize) * TickSize, _Digits);
-            SLSell = NormalizeDouble(MathRound(SLSell / TickSize) * TickSize, _Digits);
+            SLBuy = NormalizeDouble(MathRound(SLBuy / TickSize) * TickSize, eDigits);
+            SLSell = NormalizeDouble(MathRound(SLSell / TickSize) * TickSize, eDigits);
         }
         if ((OrderType() == OP_BUY) && (SLBuy < MarketInfo(Instrument, MODE_BID) - StopLevel))
         {
@@ -212,7 +206,7 @@ void ModifyOrder(int Ticket, double OpenPrice, double SLPrice, double TPPrice)
         bool res = OrderModify(Ticket, OpenPrice, SLPrice, TPPrice, 0, clrBlue);
         if (res)
         {
-            Print("TRADE - UPDATE SUCCESS - Order ", Ticket, " in ", OrderSymbol(), ": new stop loss ", SLPrice, " new take profit ", TPPrice);
+            Print("TRADE - UPDATE SUCCESS - Order ", Ticket, " in ", OrderSymbol(), ": new stop-loss ", SLPrice, " new take-profit ", TPPrice);
             NotifyStopLossUpdate(Ticket, SLPrice, OrderSymbol());
             break;
         }
@@ -226,7 +220,6 @@ void ModifyOrder(int Ticket, double OpenPrice, double SLPrice, double TPPrice)
             Print("ERROR - ", ErrorText);
         }
     }
-    return;
 }
 
 void NotifyStopLossUpdate(int OrderNumber, double SLPrice, string symbol)
@@ -248,7 +241,6 @@ void NotifyStopLossUpdate(int OrderNumber, double SLPrice, string symbol)
     {
         if (!SendNotification(AppText)) Print("Error sending notification " + IntegerToString(GetLastError()));
     }
-    datetime LastNotification = TimeCurrent();
 }
 
 string PanelBase = ExpertName + "-P-BAS";
@@ -257,8 +249,7 @@ string PanelEnableDisable = ExpertName + "-P-ENADIS";
 void DrawPanel()
 {
     string PanelText = "MQLTA PSARTS";
-    string PanelToolTip = "PSAR Trailing Stop Loss By MQLTA";
-
+    string PanelToolTip = "PSAR Trailing Stop-Loss by EarnForex.com";
     int Rows = 1;
     ObjectCreate(0, PanelBase, OBJ_RECTANGLE_LABEL, 0, 0, 0);
     ObjectSet(PanelBase, OBJPROP_XDISTANCE, Xoff);
@@ -339,7 +330,7 @@ void ChangeTrailingEnabled()
         if (IsTradeAllowed()) EnableTrailing = true;
         else
         {
-            MessageBox("You need to first enable Live Trading in the EA options.", "WARNING", MB_OK);
+            MessageBox("You need to first enable Live Trading in your Metatrader options", "WARNING", MB_OK);
         }
     }
     else EnableTrailing = false;
