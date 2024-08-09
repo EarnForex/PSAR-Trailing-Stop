@@ -1,13 +1,12 @@
 #property link          "https://www.earnforex.com/metatrader-expert-advisors/psar-trailing-stop/"
-#property version       "1.05"
+#property version       "1.06"
 #property strict
-#property copyright     "EarnForex.com - 2019-2023"
+#property copyright     "EarnForex.com - 2019-2024"
 #property description   "This expert advisor will trail the stop-loss following the Parabolic SAR."
-#property description   " "
-#property description   "WARNING: Use this software at your own risk."
-#property description   "The creator of these plugins cannot be held responsible for any damage or loss."
-#property description   " "
-#property description   "Find More on www.EarnForex.com"
+#property description   ""
+#property description   "WARNING: There is no guarantee that this expert advisor will work as intended. Use at your own risk."
+#property description   ""
+#property description   "Find more on www.EarnForex.com"
 #property icon          "\\Files\\EF-Icon-64x64px.ico"
 
 #include <MQLTA ErrorHandling.mqh>
@@ -21,20 +20,6 @@ enum ENUM_CONSIDER
     Sell = POSITION_TYPE_SELL, // SELL ONLY
 };
 
-enum ENUM_CUSTOMTIMEFRAMES
-{
-    CURRENT = PERIOD_CURRENT,           // CURRENT PERIOD
-    M1 = PERIOD_M1,                     // M1
-    M5 = PERIOD_M5,                     // M5
-    M15 = PERIOD_M15,                   // M15
-    M30 = PERIOD_M30,                   // M30
-    H1 = PERIOD_H1,                     // H1
-    H4 = PERIOD_H4,                     // H4
-    D1 = PERIOD_D1,                     // D1
-    W1 = PERIOD_W1,                     // W1
-    MN1 = PERIOD_MN1,                   // MN1
-};
-
 input string Comment_1 = "====================";  // Expert Advisor Settings
 input double PSARStep = 0.02;                     // PSAR Step
 input double PSARMax = 0.2;                       // PSAR Max
@@ -46,6 +31,7 @@ input bool UseMagic = false;                      // Filter By Magic Number
 input int MagicNumber = 0;                        // Magic Number (if above is true)
 input bool UseComment = false;                    // Filter By Comment
 input string CommentFilter = "";                  // Comment (if above is true)
+input int ProfitPoints = 0;                       // Profit Points to Start Trailing (0 = ignore profit)
 input bool EnableTrailingParam = false;           // Enable Trailing Stop
 input string Comment_3 = "====================";  // Notification Options
 input bool EnableNotify = false;                  // Enable Notifications feature
@@ -57,11 +43,13 @@ input bool ShowPanel = true;                      // Show Graphical Panel
 input string ExpertName = "MQLTA-PSARTS";         // Expert Name (to name the objects)
 input int Xoff = 20;                              // Horizontal spacing for the control panel
 input int Yoff = 20;                              // Vertical spacing for the control panel
+input ENUM_BASE_CORNER ChartCorner = CORNER_LEFT_UPPER; // Chart Corner
+input int FontSize = 10;                         // Font Size
 
 int OrderOpRetry = 5;
 bool EnableTrailing = EnableTrailingParam;
 double DPIScale; // Scaling parameter for the panel based on the screen DPI.
-int PanelMovX, PanelMovY, PanelLabX, PanelLabY, PanelRecX;
+int PanelMovY, PanelLabX, PanelLabY, PanelRecX;
 
 string Symbols[]; // Will store symbols for handles.
 int SymbolHandles[]; // Will store actual handles.
@@ -72,16 +60,15 @@ int OnInit()
 {
     CleanPanel();
     EnableTrailing = EnableTrailingParam;
-    if (ShowPanel) DrawPanel();
-
     DPIScale = (double)TerminalInfoInteger(TERMINAL_SCREEN_DPI) / 96.0;
 
-    PanelMovX = (int)MathRound(50 * DPIScale);
     PanelMovY = (int)MathRound(20 * DPIScale);
     PanelLabX = (int)MathRound(150 * DPIScale);
     PanelLabY = PanelMovY;
     PanelRecX = PanelLabX + 4;
     
+    if (ShowPanel) DrawPanel();
+
     ArrayResize(Symbols, 1, 10); // At least one (current symbol) and up to 10 reserved space.
     ArrayResize(SymbolHandles, 1, 10);
     
@@ -183,53 +170,63 @@ void TrailingStop()
         if ((OnlyType != All) && (PositionGetInteger(POSITION_TYPE) != OnlyType)) continue;
 
         double NewSL = 0;
-        double NewTP = 0;
+
         string Instrument = PositionGetString(POSITION_SYMBOL);
-        double SLBuy = GetStopLossBuy(Instrument);
-        double SLSell = GetStopLossSell(Instrument);
-        if ((SLBuy == 0) || (SLSell == 0) || (SLSell == EMPTY_VALUE) || (SLSell == EMPTY_VALUE))
+        double PointSymbol = SymbolInfoDouble(Instrument, SYMBOL_POINT);
+        ENUM_POSITION_TYPE PositionType = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
+        if (ProfitPoints > 0) // Check if there is enough profit points on this position.
+        {
+            if (((PositionType == POSITION_TYPE_BUY)  && ((PositionGetDouble(POSITION_PRICE_CURRENT) - PositionGetDouble(POSITION_PRICE_OPEN)) / PointSymbol < ProfitPoints)) ||
+                ((PositionType == POSITION_TYPE_SELL) && ((PositionGetDouble(POSITION_PRICE_OPEN) - PositionGetDouble(POSITION_PRICE_CURRENT)) / PointSymbol < ProfitPoints))) continue;
+        }
+
+        double PSAR_SL = 0;
+        if (PositionType == POSITION_TYPE_BUY) PSAR_SL = GetStopLossBuy(Instrument);
+        else if (PositionType == POSITION_TYPE_SELL) PSAR_SL = GetStopLossSell(Instrument);
+
+        if ((PSAR_SL == 0) || (PSAR_SL == EMPTY_VALUE))
         {
             Print("Not enough historical data - please load more candles for the selected timeframe.");
             return;
         }
+        if (PositionType == POSITION_TYPE_BUY)
+        {
+            if ((Shift > 0) && (PSAR_SL > iLow(Instrument, Period(), Shift))) return; // Shifted PSAR is on the wrong side of price for Buy orders.
+        }
+        else if (PositionType == POSITION_TYPE_SELL)
+        {
+            if ((Shift > 0) && (PSAR_SL < iHigh(Instrument, Period(), Shift))) return; // Shifted PSAR is on the wrong side of price for Sell orders.
+        }
 
         int eDigits = (int)SymbolInfoInteger(Instrument, SYMBOL_DIGITS);
-        SLBuy = NormalizeDouble(SLBuy, eDigits);
-        SLSell = NormalizeDouble(SLSell, eDigits);
+        PSAR_SL = NormalizeDouble(PSAR_SL, eDigits);
         double SLPrice = NormalizeDouble(PositionGetDouble(POSITION_SL), eDigits);
-        double TPPrice = NormalizeDouble(PositionGetDouble(POSITION_TP), eDigits);
-        double Spread = SymbolInfoInteger(Instrument, SYMBOL_SPREAD) * SymbolInfoDouble(Instrument, SYMBOL_POINT);
-        double StopLevel = SymbolInfoInteger(Instrument, SYMBOL_TRADE_STOPS_LEVEL) * SymbolInfoDouble(Instrument, SYMBOL_POINT);
+        double Spread = SymbolInfoInteger(Instrument, SYMBOL_SPREAD) * PointSymbol;
+        double StopLevel = SymbolInfoInteger(Instrument, SYMBOL_TRADE_STOPS_LEVEL) * PointSymbol;
         // Adjust for tick size granularity.
         double TickSize = SymbolInfoDouble(Instrument, SYMBOL_TRADE_TICK_SIZE);
         if (TickSize > 0)
         {
-            SLBuy = NormalizeDouble(MathRound(SLBuy / TickSize) * TickSize, eDigits);
-            SLSell = NormalizeDouble(MathRound(SLSell / TickSize) * TickSize, eDigits);
+            PSAR_SL = NormalizeDouble(MathRound(PSAR_SL / TickSize) * TickSize, eDigits);
         }
-        if ((PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY) && (SLBuy < SymbolInfoDouble(Instrument, SYMBOL_BID) - StopLevel))
+        if ((PositionType == POSITION_TYPE_BUY) && (PSAR_SL < SymbolInfoDouble(Instrument, SYMBOL_BID) - StopLevel))
         {
-            NewSL = NormalizeDouble(SLBuy, eDigits);
-            NewTP = TPPrice;
-            if ((NewSL > SLPrice) || (SLPrice == 0))
+            if (PSAR_SL > SLPrice)
             {
-                
-                ModifyOrder((int)ticket, NewSL, NewTP);
+                ModifyOrder(ticket, PSAR_SL, PositionGetDouble(POSITION_TP));
             }
         }
-        else if ((PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_SELL) && (SLSell > SymbolInfoDouble(Instrument, SYMBOL_ASK) + StopLevel))
+        else if ((PositionType == POSITION_TYPE_SELL) && (PSAR_SL > SymbolInfoDouble(Instrument, SYMBOL_ASK) + StopLevel))
         {
-            NewSL = NormalizeDouble(SLSell + Spread, eDigits);
-            NewTP = TPPrice;
-            if ((NewSL < SLPrice) || (SLPrice == 0))
+            if ((PSAR_SL < SLPrice) || (SLPrice == 0))
             {
-                ModifyOrder((int)ticket, NewSL, NewTP);
+                ModifyOrder(ticket, PSAR_SL, PositionGetDouble(POSITION_TP));
             }
         }
     }
 }
 
-void ModifyOrder(int Ticket, double SLPrice, double TPPrice)
+void ModifyOrder(ulong Ticket, double SLPrice, double TPPrice)
 {
     string symbol = PositionGetString(POSITION_SYMBOL);
     int eDigits = (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS);
@@ -262,7 +259,7 @@ void ModifyOrder(int Ticket, double SLPrice, double TPPrice)
     }
 }
 
-void NotifyStopLossUpdate(int OrderNumber, double SLPrice, string symbol)
+void NotifyStopLossUpdate(ulong OrderNumber, double SLPrice, string symbol)
 {
     if (!EnableNotify) return;
     if ((!SendAlert) && (!SendApp) && (!SendEmail)) return;
@@ -288,29 +285,38 @@ string PanelLabel = ExpertName + "-P-LAB";
 string PanelEnableDisable = ExpertName + "-P-ENADIS";
 void DrawPanel()
 {
+    int SignX = 1;
+    int YAdjustment = 0;
+    if ((ChartCorner == CORNER_RIGHT_UPPER) || (ChartCorner == CORNER_RIGHT_LOWER))
+    {
+        SignX = -1; // Correction for right-side panel position.
+    }
+    if ((ChartCorner == CORNER_RIGHT_LOWER) || (ChartCorner == CORNER_LEFT_LOWER))
+    {
+        YAdjustment = (PanelMovY + 2) * 2 + 1 - PanelLabY; // Correction for upper side panel position.
+    }
     string PanelText = "MQLTA PSARTS";
     string PanelToolTip = "PSAR Trailing Stop-Loss by EarnForex.com";
     int Rows = 1;
     ObjectCreate(0, PanelBase, OBJ_RECTANGLE_LABEL, 0, 0, 0);
+    ObjectSetInteger(0, PanelBase, OBJPROP_CORNER, ChartCorner);
     ObjectSetInteger(0, PanelBase, OBJPROP_XDISTANCE, Xoff);
-    ObjectSetInteger(0, PanelBase, OBJPROP_YDISTANCE, Yoff);
+    ObjectSetInteger(0, PanelBase, OBJPROP_YDISTANCE, Yoff + YAdjustment);
     ObjectSetInteger(0, PanelBase, OBJPROP_XSIZE, PanelRecX);
-    ObjectSetInteger(0, PanelBase, OBJPROP_YSIZE, (PanelMovY + 2) * 1 + 2);
+    ObjectSetInteger(0, PanelBase, OBJPROP_YSIZE, (PanelMovY + 2) * 2 + 2);
     ObjectSetInteger(0, PanelBase, OBJPROP_BGCOLOR, clrWhite);
     ObjectSetInteger(0, PanelBase, OBJPROP_BORDER_TYPE, BORDER_FLAT);
-    ObjectSetInteger(0, PanelBase, OBJPROP_STATE, false);
     ObjectSetInteger(0, PanelBase, OBJPROP_HIDDEN, true);
-    ObjectSetInteger(0, PanelBase, OBJPROP_FONTSIZE, 8);
     ObjectSetInteger(0, PanelBase, OBJPROP_SELECTABLE, false);
     ObjectSetInteger(0, PanelBase, OBJPROP_COLOR, clrBlack);
 
     DrawEdit(PanelLabel,
-             Xoff + 2,
+             Xoff + 2 * SignX,
              Yoff + 2,
              PanelLabX,
              PanelLabY,
              true,
-             10,
+             FontSize,
              PanelToolTip,
              ALIGN_CENTER,
              "Consolas",
@@ -319,6 +325,7 @@ void DrawPanel()
              clrNavy,
              clrKhaki,
              clrBlack);
+    ObjectSetInteger(0, PanelLabel, OBJPROP_CORNER, ChartCorner);
 
     string EnableDisabledText = "";
     color EnableDisabledColor = clrNavy;
@@ -337,12 +344,12 @@ void DrawPanel()
     }
 
     DrawEdit(PanelEnableDisable,
-             Xoff + 2,
+             Xoff + 2 * SignX,
              Yoff + (PanelMovY + 1) * Rows + 2,
              PanelLabX,
              PanelLabY,
              true,
-             8,
+             FontSize,
              "Click to Enable or Disable the Trailing Stop Feature",
              ALIGN_CENTER,
              "Consolas",
@@ -351,11 +358,8 @@ void DrawPanel()
              EnableDisabledColor,
              EnableDisabledBack,
              clrBlack);
-
-    Rows++;
-
-    ObjectSetInteger(0, PanelBase, OBJPROP_XSIZE, PanelRecX);
-    ObjectSetInteger(0, PanelBase, OBJPROP_YSIZE, (PanelMovY + 1) * Rows + 3);
+    ObjectSetInteger(0, PanelEnableDisable, OBJPROP_CORNER, ChartCorner);
+    ChartRedraw();
 }
 
 void CleanPanel()
@@ -367,11 +371,19 @@ void ChangeTrailingEnabled()
 {
     if (EnableTrailing == false)
     {
-        if (MQLInfoInteger(MQL_TRADE_ALLOWED)) EnableTrailing = true;
-        else
+        if ((!TerminalInfoInteger(TERMINAL_TRADE_ALLOWED)) && (!MQLInfoInteger(MQL_TRADE_ALLOWED)))
         {
-            MessageBox("You need to first enable Live Trading in the EA options.", "WARNING", MB_OK);
+            MessageBox("Please enable Live Trading in the EA's options and Automated Trading in the platform's options.", "WARNING", MB_OK);
         }
+        else if (!MQLInfoInteger(MQL_TRADE_ALLOWED))
+        {
+            MessageBox("Please enable Live Trading in the EA's options.", "WARNING", MB_OK);
+        }
+        else if (!TerminalInfoInteger(TERMINAL_TRADE_ALLOWED))
+        {
+            MessageBox("Please enable Automated Trading in the platform's options.", "WARNING", MB_OK);
+        }
+        else EnableTrailing = true;
     }
     else EnableTrailing = false;
     DrawPanel();
